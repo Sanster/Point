@@ -11,6 +11,8 @@ import android.view.MotionEvent
 import android.view.ScaleGestureDetector
 import android.view.View
 import com.sanster.point.utils.Constants
+import android.graphics.RectF
+import android.graphics.drawable.Drawable
 
 
 class ZoomImageView(context: Context, attrs: AttributeSet) : AppCompatImageView(context, attrs), ScaleGestureDetector.OnScaleGestureListener, View.OnTouchListener {
@@ -59,7 +61,8 @@ class ZoomImageView(context: Context, attrs: AttributeSet) : AppCompatImageView(
                 else -> scaleFactor
             }
 
-            mScaleMatrix.postScale(scaleFactor, scaleFactor, width / 2.0f, height / 2.0f)
+            mScaleMatrix.postScale(scaleFactor, scaleFactor, detector.focusX, detector.focusY)
+            checkBorder()
             updateImageMatrix()
         }
 
@@ -87,14 +90,6 @@ class ZoomImageView(context: Context, attrs: AttributeSet) : AppCompatImageView(
 
         return handled
     }
-
-    //    override fun onDraw(canvas: Canvas) {
-//        canvas.save()
-//        canvas.getClipBounds(mCanvasClipsBounds)
-//        canvas.scale(mInitScale, mInitScale, mScaleCenterX + mCanvasClipsBounds.left, mScaleCenterY + mCanvasClipsBounds.top)
-//        super.onDraw(canvas)
-//        canvas.restore()
-//    }
 
     override fun setImageBitmap(bm: Bitmap) {
         // 拿到图片的宽和高
@@ -128,6 +123,59 @@ class ZoomImageView(context: Context, attrs: AttributeSet) : AppCompatImageView(
         mDrawMatrix.postConcat(mTranMatrix)
         mDrawMatrix.postConcat(mScaleMatrix)
         imageMatrix = mDrawMatrix
+    }
+
+    /**
+     * 在缩放时，进行图片显示范围的控制
+     */
+    private fun checkBorder() {
+        val rect = getMatrixRectF()
+        var deltaX = 0f
+        var deltaY = 0f
+
+        // TODO: 重构这里的代码，看懂这边的逻辑
+        // TODO: 如果快速缩小图片，图片的两边还是会有白边，并且不居中，看下为什么
+        // 如果宽或高大于屏幕，则控制范围
+        if (rect.width() >= width) {
+            if (rect.left > 0) {
+                deltaX = -rect.left
+            }
+            if (rect.right < width) {
+                deltaX = width - rect.right
+            }
+        }
+        if (rect.height() >= height) {
+            if (rect.top > 0) {
+                deltaY = -rect.top
+            }
+            if (rect.bottom < height) {
+                deltaY = height - rect.bottom
+            }
+        }
+
+        // 如果宽或高小于屏幕，则让其居中
+        if (rect.width() < width) {
+            deltaX = width * 0.5f - rect.right + 0.5f * rect.width()
+        }
+        if (rect.height() < height) {
+            deltaY = height * 0.5f - rect.bottom + 0.5f * rect.height()
+        }
+
+        mTranMatrix.postTranslate(deltaX, deltaY)
+    }
+
+    /**
+     * 根据当前图片的 Matrix 获得图片的范围
+     * 返回的 RectF 的 top 和 left 可以为负数
+     */
+    private fun getMatrixRectF(): RectF {
+        val matrix = mDrawMatrix
+        val rect = RectF()
+        if (null != drawable) {
+            rect.set(0f, 0f, drawable.intrinsicWidth.toFloat(), drawable.intrinsicHeight.toFloat())
+            matrix.mapRect(rect)
+        }
+        return rect
     }
 }
 
