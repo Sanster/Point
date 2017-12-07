@@ -2,17 +2,15 @@ package com.sanster.point
 
 import android.content.Context
 import android.graphics.Bitmap
-import android.graphics.Canvas
+import android.graphics.Matrix
 import android.graphics.Rect
 import android.support.v7.widget.AppCompatImageView
 import android.util.AttributeSet
 import android.util.Log
 import android.view.MotionEvent
 import android.view.ScaleGestureDetector
-import com.bumptech.glide.Glide
-import com.bumptech.glide.request.target.SimpleTarget
-import com.bumptech.glide.request.transition.Transition
 import com.sanster.point.utils.Constants
+
 
 class ZoomImageView(context: Context, attrs: AttributeSet) : AppCompatImageView(context, attrs) {
     private val MIN_SCALE_FACTOR = 1.0F
@@ -25,14 +23,26 @@ class ZoomImageView(context: Context, attrs: AttributeSet) : AppCompatImageView(
     private var mScaleCenterX: Float = 0F
     private var mScaleCenterY: Float = 0F
 
+    private val mScaleMatrix: Matrix = Matrix()
+    private val mTranMatrix: Matrix = Matrix()
+    private var mDrawMatrix: Matrix = Matrix()
+
     private var mCanvasClipsBounds: Rect = Rect()
     private val mScaleGestureDetector: ScaleGestureDetector
 
     init {
+        super.setScaleType(ScaleType.MATRIX)
         mScaleGestureDetector = ScaleGestureDetector(this.context, ScaleListener())
     }
 
-    private inner class ScaleListener : ScaleGestureDetector.SimpleOnScaleGestureListener() {
+    private inner class ScaleListener : ScaleGestureDetector.OnScaleGestureListener {
+        override fun onScaleBegin(p0: ScaleGestureDetector?): Boolean {
+            return true
+        }
+
+        override fun onScaleEnd(p0: ScaleGestureDetector?) {
+        }
+
         override fun onScale(detector: ScaleGestureDetector): Boolean {
             mScale *= detector.scaleFactor
 
@@ -47,17 +57,6 @@ class ZoomImageView(context: Context, attrs: AttributeSet) : AppCompatImageView(
             Log.d(Constants.TAG, "scale: $mScale scaleCenterX: $mScaleCenterX scaleCenterY: $mScaleCenterY")
             return true
         }
-    }
-
-    fun load(uriString: String) {
-        Glide.with(this)
-                .asBitmap()
-                .load(uriString)
-                .into(object : SimpleTarget<Bitmap>() {
-                    override fun onResourceReady(resource: Bitmap?, transition: Transition<in Bitmap>?) {
-                        setImageBitmap(resource)
-                    }
-                })
     }
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
@@ -80,13 +79,35 @@ class ZoomImageView(context: Context, attrs: AttributeSet) : AppCompatImageView(
         return handled
     }
 
-    override fun onDraw(canvas: Canvas) {
-        Log.d(Constants.TAG, "onDraw")
-        canvas.save()
-        canvas.getClipBounds(mCanvasClipsBounds)
-        canvas.scale(mScale, mScale, mScaleCenterX + mCanvasClipsBounds.left, mScaleCenterY + mCanvasClipsBounds.top)
-        super.onDraw(canvas)
-        canvas.restore()
+    //    override fun onDraw(canvas: Canvas) {
+//        canvas.save()
+//        canvas.getClipBounds(mCanvasClipsBounds)
+//        canvas.scale(mScale, mScale, mScaleCenterX + mCanvasClipsBounds.left, mScaleCenterY + mCanvasClipsBounds.top)
+//        super.onDraw(canvas)
+//        canvas.restore()
+//    }
+
+    override fun setImageBitmap(bm: Bitmap) {
+        // 拿到图片的宽和高
+        val dw = bm.width
+        val dh = bm.height
+
+        // 如果图片的宽/高大于屏幕，则缩放至屏幕的宽/高
+        mScale = when {
+            dw > width && dh <= height -> width * 1.0f / dw
+            dh > height && dw <= width -> height * 1.0f / dh
+            dw > width && dh > height -> Math.min(width * 1.0f / dw, height * 1.0f / dh)
+            else -> mScale
+        }
+
+        // 图片移动至屏幕中心
+        mTranMatrix.postTranslate((width - dw) / 2.0f, (height - dh) / 2.0f)
+        mScaleMatrix.postScale(mScale, mScale, width / 2.0f, height / 2.0f)
+        mDrawMatrix.postConcat(mTranMatrix)
+        mDrawMatrix.postConcat(mScaleMatrix)
+        imageMatrix = mDrawMatrix
+
+        super.setImageBitmap(bm)
     }
 }
 

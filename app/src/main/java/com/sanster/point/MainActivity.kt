@@ -1,7 +1,11 @@
 package com.sanster.point
 
+import android.graphics.Bitmap
 import android.support.v7.app.AppCompatActivity
 import android.os.Bundle
+import com.bumptech.glide.Glide
+import com.bumptech.glide.request.target.SimpleTarget
+import com.bumptech.glide.request.transition.Transition
 import kotlinx.android.synthetic.main.activity_main.*
 
 class MainActivity : AppCompatActivity() {
@@ -14,7 +18,13 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun loadTestImage() {
-        val uriString = "android.resource://$packageName/${R.raw.test}"
-        imageView.load(uriString)
+        Glide.with(this)
+                .asBitmap()
+                .load(R.raw.test)
+                .into(object: SimpleTarget<Bitmap>() {
+                    override fun onResourceReady(resource: Bitmap?, transition: Transition<in Bitmap>?) {
+                        imageView.setImageBitmap(resource!!)
+                    }
+                })
     }
 }
