@@ -11,21 +11,32 @@ import android.view.ScaleGestureDetector
 import android.view.View
 import com.sanster.point.utils.Constants
 import android.graphics.RectF
+import android.view.ViewConfiguration
+import android.view.animation.AccelerateDecelerateInterpolator
 
 
 /**
  * The code for this class was adapted from the PhotoView project: https://github.com/chrisbanes/PhotoView
  */
-class ZoomImageView(context: Context, attrs: AttributeSet) : AppCompatImageView(context, attrs), ScaleGestureDetector.OnScaleGestureListener, View.OnTouchListener {
-    private val mMaxScale: Float = 3.0F
+class ZoomImageView(context: Context, attrs: AttributeSet) : AppCompatImageView(context, attrs),
+        ScaleGestureDetector.OnScaleGestureListener,
+        View.OnTouchListener {
 
-    private var mActiveX: Float = 0F
-    private var mActiveY: Float = 0F
-    private var mMoveX: Float = 0F
-    private var mMoveY: Float = 0F
-    private var mInitScale: Float = 1.0F
-    private var mScaleCenterX: Float = 0F
-    private var mScaleCenterY: Float = 0F
+    // scale apply to baseMatrix
+    private val MAX_SCALE: Float = 3.0f
+    private val MIN_SCALE: Float = 1.0f
+
+    private val mZoomDuration: Int = 200
+    private val mInterpolator = AccelerateDecelerateInterpolator()
+
+    private var mTouchSlop: Int
+
+    private var mActiveX: Float = 0f
+    private var mActiveY: Float = 0f
+    private var mMoveX: Float = 0f
+    private var mMoveY: Float = 0f
+    private var mScaleCenterX: Float = 0f
+    private var mScaleCenterY: Float = 0f
 
     private var mBaseMatrix: Matrix = Matrix()
     private val mSuppMatrix: Matrix = Matrix()
@@ -36,10 +47,12 @@ class ZoomImageView(context: Context, attrs: AttributeSet) : AppCompatImageView(
 
     private val mScaleGestureDetector: ScaleGestureDetector
 
+
     init {
         super.setScaleType(ScaleType.MATRIX)
         setOnTouchListener(this)
         mScaleGestureDetector = ScaleGestureDetector(context, this)
+        mTouchSlop = ViewConfiguration.get(context).scaledTouchSlop
     }
 
     override fun onScaleBegin(detector: ScaleGestureDetector?): Boolean {
@@ -55,20 +68,25 @@ class ZoomImageView(context: Context, attrs: AttributeSet) : AppCompatImageView(
 
         if (drawable == null) return true
 
-        val scale = getScale()
-
-        if ((scale < mMaxScale || scaleFactor < 1f)
-                && (scale > mInitScale || scaleFactor > 1f)) {
-            mSuppMatrix.postScale(scaleFactor, scaleFactor, detector.focusX, detector.focusY)
-            checkAndDisplayMatrix()
-        }
+        onScale(scaleFactor, detector.focusX, detector.focusY)
 
         Log.d(Constants.TAG, "scale: ${getScale()} scaleCenterX: $mScaleCenterX scaleCenterY: $mScaleCenterY")
 
         return true
     }
 
-    override fun onTouch(v: View?, event: MotionEvent): Boolean {
+    private fun onScale(scaleFactor: Float, focusX: Float, focuxY: Float) {
+        val scale = getScale()
+
+        if ((scale < (MAX_SCALE * 1.1) || scaleFactor < 1f)
+                && (scale > (MIN_SCALE * 0.9) || scaleFactor > 1f)) {
+
+            mSuppMatrix.postScale(scaleFactor, scaleFactor, focusX, focuxY)
+            checkAndDisplayMatrix()
+        }
+    }
+
+    override fun onTouch(v: View, event: MotionEvent): Boolean {
         var handled = false
 
         handled = mScaleGestureDetector.onTouchEvent(event)
@@ -82,7 +100,22 @@ class ZoomImageView(context: Context, attrs: AttributeSet) : AppCompatImageView(
                 mMoveX = event.x
                 mMoveY = event.y
             }
+            MotionEvent.ACTION_UP -> {
+                val s = getScale()
+                val targetScale = when {
+                    s < MIN_SCALE -> MIN_SCALE
+                    s > MAX_SCALE -> MAX_SCALE
+                    else -> s
+                }
 
+                if (targetScale != s) {
+                    val rect = getDisplayRect()
+                    if (rect != null) {
+                        v.post(AnimatedZoomRunnable(getScale(), targetScale, rect.centerX(), rect.centerY()))
+                        handled = true
+                    }
+                }
+            }
         }
 
         return handled
@@ -117,7 +150,7 @@ class ZoomImageView(context: Context, attrs: AttributeSet) : AppCompatImageView(
         super.setImageBitmap(bm)
     }
 
-    fun getScale(): Float {
+    public fun getScale(): Float {
         mSuppMatrix.getValues(mMatrixValues)
         return mMatrixValues[Matrix.MSCALE_X]
     }
@@ -178,6 +211,11 @@ class ZoomImageView(context: Context, attrs: AttributeSet) : AppCompatImageView(
         return null
     }
 
+    public fun getDisplayRect(): RectF? {
+        checkMatrixBounds()
+        return getDisplayRect(getDrawMatrix())
+    }
+
     private fun updateImageViewMatrix() {
         imageMatrix = getDrawMatrix()
     }
@@ -186,6 +224,48 @@ class ZoomImageView(context: Context, attrs: AttributeSet) : AppCompatImageView(
         mDrawMatrix.set(mBaseMatrix)
         mDrawMatrix.postConcat(mSuppMatrix)
         return mDrawMatrix
+    }
+
+    inner class AnimatedZoomRunnable(
+            currentZoom: Float,
+            targetZoom: Float,
+            focalX: Float,
+            focalY: Float
+    ) : Runnable {
+        private var mFocalX: Float = 0F
+        private var mFocalY: Float = 0F
+        private var mZoomStart: Float = 0F
+        private var mZoomEnd: Float = 0F
+        private var mStartTime: Long = 0L
+
+        init {
+            mFocalX = focalX
+            mFocalY = focalY
+            mZoomStart = currentZoom
+            mZoomEnd = targetZoom
+            mStartTime = System.currentTimeMillis()
+        }
+
+        override fun run() {
+            val t = interpolate()
+            val scale = mZoomStart + t * (mZoomEnd - mZoomStart)
+            val deltaScale = scale / getScale()
+
+            onScale(deltaScale, mFocalX, mFocalY)
+
+            // We haven't hit our target scale yet, so post ourselves again
+            if (t < 1f) {
+//                Compat.postOnAnimation(mImageView, this)
+                this@ZoomImageView.postDelayed(this@AnimatedZoomRunnable, 1000 / 60)
+            }
+        }
+
+        private fun interpolate(): Float {
+            var t = 1f * (System.currentTimeMillis() - mStartTime) / mZoomDuration
+            t = Math.min(1f, t)
+            t = mInterpolator.getInterpolation(t)
+            return t
+        }
     }
 }
 
