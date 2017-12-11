@@ -25,18 +25,18 @@ class ZoomImageView(context: Context, attrs: AttributeSet) : AppCompatImageView(
     // scale apply to baseMatrix
     private val MAX_SCALE: Float = 3.0f
     private val MIN_SCALE: Float = 1.0f
+    private val INVALID_POINTER_ID: Int = -1
 
     private val mZoomDuration: Int = 200
     private val mInterpolator = AccelerateDecelerateInterpolator()
 
     private var mTouchSlop: Int
 
-    private var mActiveX: Float = 0f
-    private var mActiveY: Float = 0f
-    private var mMoveX: Float = 0f
-    private var mMoveY: Float = 0f
-    private var mScaleCenterX: Float = 0f
-    private var mScaleCenterY: Float = 0f
+    private var mActivePointerId: Int = INVALID_POINTER_ID
+    private var mActivePointerIndex: Int = 0
+    private var mLastTouchX: Float = 0f
+    private var mLastTouchY: Float = 0f
+    private var mIsDragging: Boolean = false
 
     private var mBaseMatrix: Matrix = Matrix()
     private val mSuppMatrix: Matrix = Matrix()
@@ -70,7 +70,7 @@ class ZoomImageView(context: Context, attrs: AttributeSet) : AppCompatImageView(
 
         onScale(scaleFactor, detector.focusX, detector.focusY)
 
-        Log.d(Constants.TAG, "scale: ${getScale()} scaleCenterX: $mScaleCenterX scaleCenterY: $mScaleCenterY")
+        Log.d(Constants.TAG, "scale: ${getScale()}")
 
         return true
     }
@@ -86,21 +86,48 @@ class ZoomImageView(context: Context, attrs: AttributeSet) : AppCompatImageView(
         }
     }
 
+
     override fun onTouch(v: View, event: MotionEvent): Boolean {
         var handled = false
 
         handled = mScaleGestureDetector.onTouchEvent(event)
 
-        when (event.action) {
+        when (event.action and MotionEvent.ACTION_MASK) {
             MotionEvent.ACTION_DOWN -> {
-                mActiveX = event.x
-                mActiveY = event.y
+                mActivePointerId = event.getPointerId(0)
+
+                mLastTouchX = getActiveX(event)
+                mLastTouchY = getActiveY(event)
+
+                mIsDragging = false
             }
             MotionEvent.ACTION_MOVE -> {
-                mMoveX = event.x
-                mMoveY = event.y
+                val x = getActiveX(event)
+                val y = getActiveY(event)
+                val dx = x - mLastTouchX
+                val dy = y - mLastTouchY
+
+                if (event.pointerCount > 1) {
+                    if (!mIsDragging) {
+                        mIsDragging = shouldStartDrag(dx, dy)
+                    }
+                } else {
+                    mIsDragging = false
+                }
+
+                mLastTouchX = x
+                mLastTouchY = y
+
+                if (mIsDragging) {
+                    onDrag(dx, dy)
+                }
+            }
+            MotionEvent.ACTION_CANCEL -> {
+                mActivePointerId = INVALID_POINTER_ID
             }
             MotionEvent.ACTION_UP -> {
+                mActivePointerId = INVALID_POINTER_ID
+
                 val s = getScale()
                 val targetScale = when {
                     s < MIN_SCALE -> MIN_SCALE
@@ -116,9 +143,35 @@ class ZoomImageView(context: Context, attrs: AttributeSet) : AppCompatImageView(
                     }
                 }
             }
+            MotionEvent.ACTION_POINTER_UP -> {
+                val pointerIndex = getPointerIndex(event.action)
+                val pointerId = event.getPointerId(pointerIndex)
+                if (pointerId == mActivePointerId) {
+                    val newPointerIndex = when (pointerIndex) {
+                        0 -> 1
+                        else -> 0
+                    }
+                    mActivePointerId = event.getPointerId(newPointerIndex)
+                    mLastTouchX = event.getX(newPointerIndex)
+                    mLastTouchY = event.getY(newPointerIndex)
+                }
+            }
         }
 
+        mActivePointerIndex = when (mActivePointerId) {
+            INVALID_POINTER_ID -> event.findPointerIndex(0)
+            else -> event.findPointerIndex(mActivePointerId)
+        }
         return handled
+    }
+
+    private fun onDrag(dx: Float, dy: Float) {
+        mSuppMatrix.postTranslate(dx, dy)
+        checkAndDisplayMatrix()
+    }
+
+    private fun getPointerIndex(action: Int): Int {
+        return action and MotionEvent.ACTION_POINTER_INDEX_MASK shr MotionEvent.ACTION_POINTER_INDEX_SHIFT
     }
 
 
@@ -225,6 +278,27 @@ class ZoomImageView(context: Context, attrs: AttributeSet) : AppCompatImageView(
         mDrawMatrix.postConcat(mSuppMatrix)
         return mDrawMatrix
     }
+
+    private fun shouldStartDrag(dx: Float, dy: Float): Boolean {
+        return Math.sqrt(((dx * dx) + (dy * dy)).toDouble()) >= mTouchSlop
+    }
+
+    private fun getActiveX(event: MotionEvent): Float {
+        return try {
+            event.getX(mActivePointerId)
+        } catch (e: Exception) {
+            event.x
+        }
+    }
+
+    private fun getActiveY(event: MotionEvent): Float {
+        return try {
+            event.getY(mActivePointerId)
+        } catch (e: Exception) {
+            event.y
+        }
+    }
+
 
     inner class AnimatedZoomRunnable(
             currentZoom: Float,
